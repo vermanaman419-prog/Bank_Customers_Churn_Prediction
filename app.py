@@ -1,8 +1,14 @@
+import os
 import gradio as gr
 import pandas as pd
 import numpy as np
 import joblib
 import sys
+import logging
+
+# Basic logging so Render logs show useful info
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # -------------------------------------------------
 # Load your trained churn model (pipeline)
@@ -11,8 +17,9 @@ MODEL_PATH = "churn_model.joblib"
 
 try:
     model = joblib.load(MODEL_PATH)
-    print("Model loaded successfully.", file=sys.stderr)
+    logger.info("Model loaded successfully.")
 except Exception as e:
+    logger.exception(f"Failed to load model at {MODEL_PATH}: {e}")
     raise RuntimeError(f"Failed to load model at {MODEL_PATH}: {e}")
 
 # -------------------------------------------------
@@ -45,7 +52,7 @@ def build_df(CreditScore, Age, Tenure, Balance, NumOfProducts, HasCrCard, IsActi
     df = pd.DataFrame([data], columns=FEATURES)
     df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
 
-    print("Final DF:", df.to_dict(), file=sys.stderr)
+    logger.debug("Final DF: %s", df.to_dict())
     return df
 
 # -------------------------------------------------
@@ -56,12 +63,19 @@ def predict_churn(CreditScore, Age, Tenure, Balance, NumOfProducts, HasCrCard, I
     X = build_df(CreditScore, Age, Tenure, Balance, NumOfProducts, HasCrCard, IsActiveMember)
 
     # prediction
-    pred = int(model.predict(X)[0])
+    try:
+        pred = int(model.predict(X)[0])
+    except Exception as e:
+        logger.exception("Model prediction error")
+        return f"Model prediction failed: {e}"
 
     # probability
     prob = None
-    if hasattr(model, "predict_proba"):
-        prob = float(model.predict_proba(X)[0][1])
+    try:
+        if hasattr(model, "predict_proba"):
+            prob = float(model.predict_proba(X)[0][1])
+    except Exception:
+        prob = None
 
     label = "🔴 Customer Will Churn" if pred == 1 else "🟢 Customer Will NOT Churn"
 
@@ -97,5 +111,11 @@ interface = gr.Interface(
     examples=examples
 )
 
+# -------------------------------------------------
+# Launch (works locally and on Render)
+# -------------------------------------------------
 if __name__ == "__main__":
-    interface.launch()
+    port = int(os.environ.get("PORT", 7860))  # Render supplies PORT env var
+    logger.info("Starting Gradio on 0.0.0.0:%s", port)
+    interface.launch(server_name="0.0.0.0", server_port=port, share=False)
+
